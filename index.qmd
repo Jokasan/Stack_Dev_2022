@@ -1,0 +1,191 @@
+---
+title: "Developer Working Status - Stack Overflow 2022 Survey"
+author: "Nils Indreiten"
+format: html
+editor: visual
+---
+
+## Executive Summary
+
+```{r setup, include=FALSE}
+pacman::p_load(tidyverse,tidymodels,gt,readr,tidyquant)
+survey <- read_csv("to_import.csv")
+
+values <- c("#EB0050", "#143C75", "#4BB9A0", "#ECBF08")
+
+```
+
+This project is concerned with the Stack Overflow 2022 developer survey, this is a yearly survey conducted by Stack Overflow on developers and their current state of affairs. It covers a range of topics from income to how many years of experience they have and so on. Remote and Hybrid working arrangements have become increasingly important post COVID-19, as hybrid/fully remote arrangements become more popular; it is important that organisations adequately prepare for the. The objectives of this project are as follows. First to engage in exploratory data analysis. Second to understand whether there is a statistically significant difference in the compensation between remote and hybrid developers. Finally to train and screen some models with the view to deploy the best performing one to production.
+
+## Data Understanding
+
+The data set contains more than 50 variables, ranging from years of experience to employment etc. For the purposes of this project we will select only a few and only Germany, The United Kingdom and The United States of America will be considered the variables chosen are outlined below:
+
+```{r}
+#| echo: false
+survey %>%
+  select(
+    ResponseId,
+    Employment,
+    EdLevel,
+    YearsCode,
+    YearsCodePro,
+    OrgSize,
+    Country,
+    # Gender,
+    CompTotal,
+    Currency,
+    WorkExp,
+    RemoteWork
+  ) -> survey
+colnames(survey)
+```
+
+There is some data cleaning that we need to do, for example, consider the difference in the currencies across the countries in our sample:
+
+```{r}
+#| echo: false
+
+survey %>% 
+  group_by(Country,Currency) %>% 
+  tally(name = "Count") %>% 
+  knitr::kable()
+```
+
+We can see that there is a difference in the currencies between the countries, let's convert the euro and pound sterling to dollar:
+
+```{r}
+#| message: false
+survey %>%
+  mutate(
+    Currency = str_sub(Currency, 1, 3),
+    Compensation_usd = case_when(
+      Currency == "GBP" ~ CompTotal * 1.21,
+      Currency == "EUR" ~ CompTotal * 1.06,
+      TRUE ~ CompTotal
+    )
+  ) %>%
+  select(-CompTotal,-Currency,-ResponseId) %>%
+  mutate(YearsCode = as.double(YearsCode),
+         YearsCodePro = as.double(YearsCodePro),
+         Country = case_when(
+           Country == "United States of America" ~ "USA",
+           Country == "United Kingdom of Great Britain and Northern Ireland" ~ "GB",
+           TRUE ~ Country
+         )) %>% 
+  na.omit() %>% 
+  filter(Compensation_usd <= 6000000 & Compensation_usd >= 1000) -> survey 
+```
+
+The exchange rate was determined at the time of writing this project and may be different at the time of reading this. In addition we also changed the columns denoting the numbers of years with coding experience to be numeric, since they where characters, and shortened the country names. Finally we also removed some outliers.
+
+### Data Viz
+
+Disparities between the compensation among developers depending on geographical region has long been a subject of study. Let's take a look at this difference for the three countries in the sample:
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-cap: Figure 1. Distribution of total compensation for developers
+
+# Data Viz one:
+
+survey %>% 
+  filter(Compensation_usd>0) %>% 
+  ggplot(aes(Compensation_usd, fill=Country)) +
+  geom_histogram() +
+  scale_x_continuous(limits = c(0,1000000),
+                     labels = scales::number_format(prefix = "$"))+
+  scale_y_continuous(expand = c(0.01,0.01))+
+  facet_wrap(~Country,scales="free_y")+
+  tidyquant::theme_tq()+
+  theme(
+    axis.text.x = element_text(
+      angle=45,
+      vjust=1,
+      hjust=1
+    )
+  )+
+  scale_fill_manual(values=values)+
+  geom_vline(aes(xintercept = 110000))+
+  labs(y="Count",
+       x="")+
+  theme(legend.position = "none",
+        plot.title.position = 'plot')
+```
+
+At a general level it seems that the distributions in each country follow a similar trend, they are right skewed. When comparing the distributions to the median of the compensation for the sample as a whole it becomes clear that, The United States has a larger share of developers earning more than the median compensation, which is \$ 110,000. In contrast, the majority of developers in both the United Kingdom and Germany have a total compensation that is below the median.
+
+It would be interesting to see how this relationship holds up when considering other factors such as years coding professionally and working status:
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-cap: Figure 2. Relationship between work experience and compensastion broken down by work status and years coding as a pro
+
+survey %>%
+  filter(Compensation_usd <= 600000) %>% 
+  ggplot(aes(
+    x = WorkExp,
+    y = Compensation_usd,
+    color = RemoteWork,
+    size = YearsCodePro
+  )) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~Country, scales = "free_y")+
+  scale_y_continuous(labels=scales::number_format())+
+  scale_color_manual(values = values)+
+theme_minimal()+
+  theme(legend.position = "bottom",
+        legend.title = element_blank())
+```
+
+It is somewhat difficult to see whether a pattern exists, however, the plot above demonstrates that the sample size for The United States is much larger than the other countries. If we focus on The United Kingdom on may be able to suggest that there are more hybrid developers earning \$200k or more with varying years of professional experience. In contrast, we may say the inverse about developers in Germany. Due to the large sample size for The United States it is much harder to pick out the nuances in the developers earning \$200k or more and what level of professional coding experience and working status they have.
+
+### The relatiopnship between working status and compensation
+
+Focusing on the USA sample, let's look into the effect size of the years of 
+professional coding and work experience, when considering remote working status
+and when not taking. the efect of that into account. 
+
+```{r}
+set.seed(123)
+ignore_remote_usa_intervals <- reg_intervals(Compensation_usd ~ YearsCodePro+
+                          WorkExp,
+                        data=survey_usa,
+                        times = 500)
+
+set.seed(123)
+account_for_remote_usa <- 
+  reg_intervals(Compensation_usd ~ YearsCodePro+
+                 WorkExp+
+                 RemoteWork,
+               data=survey_usa,
+               times = 500)
+```
+
+```{r}
+
+# Plot bootstrapped intervals:
+
+
+bind_rows(
+  ignore_remote_usa_intervals %>% mutate(Remote = "ignore"), 
+  account_for_remote_usa %>% mutate(Remote = "account for remote")
+) %>%
+  filter(!str_detect(term, "Remote")) %>%
+  ggplot(aes(.estimate, term, color = Remote)) +
+  geom_vline(xintercept = 0, size = 1.5, lty = 2, color = "gray50") +
+  geom_errorbar(size = 1.4, alpha = 0.7,
+                aes(xmin = .lower, xmax = .upper)) +
+  geom_point(size = 3) +
+  scale_x_continuous(labels = scales::dollar) +
+  scale_color_manual(values = values) +
+  theme(legend.position="bottom") +
+  labs(x = "Change in compensation (USD $)", y = NULL, color = "Include working status in model?",
+       title = "Bootstrap confidence intervals for developer compensation in the United States",
+       subtitle = "There is no difference in the effect of years and work esperience that developers have according to whether they are remote developers or not")+
+  tidyquant::theme_tq()
+```
