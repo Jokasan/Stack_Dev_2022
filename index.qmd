@@ -8,7 +8,7 @@ editor: visual
 ## Executive Summary
 
 ```{r setup, include=FALSE}
-pacman::p_load(tidyverse,tidymodels,gt,readr,tidyquant)
+pacman::p_load(tidyverse,tidymodels,gt,readr,tidyquant,vip)
 survey <- read_csv("to_import.csv")
 
 values <- c("#EB0050", "#143C75", "#4BB9A0", "#ECBF08")
@@ -110,7 +110,8 @@ survey %>%
   scale_fill_manual(values=values)+
   geom_vline(aes(xintercept = 110000))+
   labs(y="Count",
-       x="")+
+       x="",
+       fill= NULL)+
   theme(legend.position = "none",
         plot.title.position = 'plot')
 ```
@@ -146,11 +147,11 @@ It is somewhat difficult to see whether a pattern exists, however, the plot abov
 
 ### The relatiopnship between working status and compensation
 
-Focusing on the USA sample, let's look into the effect size of the years of 
-professional coding and work experience, when considering remote working status
-and when not taking. the efect of that into account. 
+Focusing on the USA sample, let's look into the effect size of the years of professional coding and work experience, when considering remote working status and when not taking. the effect of that into account.
 
 ```{r}
+survey_usa <- survey %>% 
+  filter(Country == "USA")
 set.seed(123)
 ignore_remote_usa_intervals <- reg_intervals(Compensation_usd ~ YearsCodePro+
                           WorkExp,
@@ -166,10 +167,17 @@ account_for_remote_usa <-
                times = 500)
 ```
 
+The bootstrapped results show that there is virtually no difference
+when accounting for remote status. In other words, there is no difference
+between the effect of years professionally coding and years of 
+work experience on the compensation in USD. Perhaps more importantly
+we see that the number of years professionally coded actually has 
+a more positive impact on compensation, whereas work experience has a 
+negative effect. Why might this be the case?
+
 ```{r}
 
 # Plot bootstrapped intervals:
-
 
 bind_rows(
   ignore_remote_usa_intervals %>% mutate(Remote = "ignore"), 
@@ -189,3 +197,220 @@ bind_rows(
        subtitle = "There is no difference in the effect of years and work esperience that developers have according to whether they are remote developers or not")+
   tidyquant::theme_tq()
 ```
+
+## Predictive Analytics
+
+Now that we have a better understanding of the data, let's proceed to 
+build some predictive models that will aid us in predicting whether
+a developer will opt for being fully remote or hybrid. 
+
+We begin by creating our training and testing splits, using stratified
+re-sampling on the outcome variable:
+
+
+```{r}
+set.seed(1234)
+Stack_split <- initial_split(survey, strata = RemoteWork)
+Stack_train <- training(Stack_split)
+Stack_test <- testing(Stack_split)
+```
+
+Next we want to specify our pre-processing recipe or our feature 
+engineering steps:
+
+```{r}
+Stack_recipe <- recipe(RemoteWork ~ ., data = survey) %>% 
+  step_YeoJohnson(all_numeric_predictors()) %>% 
+  step_normalize(all_numeric_predictors())
+```
+
+We applied two preprocessing steps, the first applies the Yeo-Johnson
+transformation to the data and the second normalises the data. One 
+could argue that only one is needed, however given the anomalies in
+the data, it would be safe to include both. We can also consider this
+when selecting the best model as a method for boosting performance.
+
+Let's begin by specifying three models, all of which we will tune to 
+get good candidates for the final models. The specs for the models are
+outlined below:
+
+```{r}
+
+glm_spec <-
+    logistic_reg(penalty = tune(),mixture = 1) |>
+    set_engine("glm")
+
+cart_spec <- 
+  decision_tree(cost_complexity = tune(), min_n = tune()) %>% 
+  set_engine("rpart") %>% 
+  set_mode("classification")
+
+tree_spec <-
+  rand_forest(min_n = tune(),trees=1000) |>
+  set_engine("ranger") |>
+  set_mode("classification")
+```
+
+In addition, we will also implement 5-fold cross-validation, to make the model
+selection more robust. This is defined below:
+
+```{r}
+set.seed(1234)
+Stack_folds <- vfold_cv(Stack_train,strata = RemoteWork,v = 5)
+```
+
+Next, we specify a workflow set, which includes all of the models that we 
+specified. This will apply the recipe across the models.
+
+```{r}
+doParallel::registerDoParallel()
+workflow_set <-
+  workflow_set(
+    preproc = list(Stack_recipe),
+    models = list(
+      glm = glm_spec,
+      cart = cart_spec ,
+      tree = tree_spec)
+  ) 
+```
+
+Finally we need to set up a tuning grid such that different values for the 
+different parameters can be passed to the relevant models. We set this grid up 
+below, assigning the results to `grid_results`. 
+
+```{r}
+
+# Grid:
+grid_ctrl <-
+  control_grid(
+    save_pred = TRUE,
+    parallel_over = "everything",
+    save_workflow = TRUE
+  )
+
+grid_results <-
+  workflow_set %>%
+  workflow_map(
+    seed = 1503,
+    resamples = Stack_folds,
+    grid = 25,
+    control = grid_ctrl
+  )
+
+```
+
+We now have a set of candidates for our different types of 
+models. Let's get a quick summary of the best candidates 
+considering the `roc_auc` metric:
+
+```{r}
+rank_results(grid_results,
+             rank_metric = "roc_auc",
+             select_best = TRUE
+) |>
+  gt()
+```
+
+Performance isn't great, our accuracy and area under the curve remain 
+between 63% and 68%. It seems a simple logistic regression model will 
+do the job, eliminating the need for additional computation that is
+required for the other models. By employing a simpler model we will
+also be saving costs. Let's extract this model and perform one last
+train and test on the data:
+
+```{r}
+best_model_id <- "recipe_glm"
+
+best_fit <- 
+  grid_results |>
+  extract_workflow_set_result(best_model_id) |>
+  select_best(metric = "roc_auc")
+  
+```
+
+We then finalise the workflow, implement the final fit and collect the metrics:
+
+```{r}
+final_workflow <-
+  workflow_set |>
+  extract_workflow(best_model_id) |>
+  finalize_workflow(best_fit)
+
+final_fit <-
+  final_workflow |>
+  last_fit(Stack_split)
+
+final_fit |>
+  collect_metrics() |>
+  gt()
+```
+
+Our accuracy and area under the curve remain at around the same level. Let's
+visualise the curve:
+
+```{r}
+final_fit %>% 
+  collect_predictions() %>%
+  roc_curve(RemoteWork,`.pred_Fully remote`) %>% 
+  autoplot()
+
+```
+
+```{r}
+
+final_fit %>% 
+  pluck(".workflow",1) %>% 
+  extract_fit_parsnip() %>% 
+  vip(geom = "point", aesthetics = list(fill = values[2], alpha = 0.8)) +
+  scale_y_continuous(expand = c(0, 0))+
+  theme_bw()
+```
+
+The plot above demonstrates the variable importance in for the prediction.
+It seems that The country is the most important variable, being almost 30%
+more important than the other variables. Compensation in USD and the 
+organisation being 2 to 9 employees large also play a significant role in 
+predicting whether developers would be fully remote. 
+
+# Towards a Leaner Approach
+
+There are some structural issues with the data, one that particularly
+comes to mind is the class imbalance of the outcome variable. Let's
+also try to implement a few other tweaks to the workflow to generate better
+performance focusing on the logistic regression model. 
+
+First, let's create a workflowset but in this case we will pass two
+separate feature engineering recipes to the model, the first will
+be the same as the previous one  and the second will also include down 
+sampling of the outcome variable.
+
+```{r}
+Stack_recipe <- recipe(RemoteWork ~ ., data = survey) %>% 
+  step_YeoJohnson(all_numeric_predictors()) %>% 
+  step_normalize(all_numeric_predictors())
+```
+
+The spec will remain the same, however we will specify 
+a narrower tuning grid, ranging from -3 to 0. First,lets
+set up our workflow with 2 separate recipes:
+
+
+```{r}
+
+wf_set <-
+  workflow_set(
+    list(basic = Stack_recipe,
+         downsampling = Stack_recipe %>% step_downsample(ratio = RemoteWork)),
+    list(glmnet = glm_spec)
+  )
+
+wf_set
+```
+
+
+
+
+
+
+
+
