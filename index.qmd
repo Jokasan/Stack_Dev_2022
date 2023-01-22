@@ -8,7 +8,7 @@ editor: visual
 ## Executive Summary
 
 ```{r setup, include=FALSE}
-pacman::p_load(tidyverse,tidymodels,gt,readr,tidyquant,vip)
+pacman::p_load(tidyverse,tidymodels,gt,readr,tidyquant,vip,themis)
 survey <- read_csv("to_import.csv")
 
 values <- c("#EB0050", "#143C75", "#4BB9A0", "#ECBF08")
@@ -140,7 +140,8 @@ survey %>%
   scale_color_manual(values = values)+
 theme_minimal()+
   theme(legend.position = "bottom",
-        legend.title = element_blank())
+        legend.title = element_blank())+
+  labs(y="Comensation ($)")
 ```
 
 It is somewhat difficult to see whether a pattern exists, however, the plot above demonstrates that the sample size for The United States is much larger than the other countries. If we focus on The United Kingdom on may be able to suggest that there are more hybrid developers earning \$200k or more with varying years of professional experience. In contrast, we may say the inverse about developers in Germany. Due to the large sample size for The United States it is much harder to pick out the nuances in the developers earning \$200k or more and what level of professional coding experience and working status they have.
@@ -167,13 +168,7 @@ account_for_remote_usa <-
                times = 500)
 ```
 
-The bootstrapped results show that there is virtually no difference
-when accounting for remote status. In other words, there is no difference
-between the effect of years professionally coding and years of 
-work experience on the compensation in USD. Perhaps more importantly
-we see that the number of years professionally coded actually has 
-a more positive impact on compensation, whereas work experience has a 
-negative effect. Why might this be the case?
+The bootstrapped results show that there is virtually no difference when accounting for remote status. In other words, there is no difference between the effect of years professionally coding and years of work experience on the compensation in USD. Perhaps more importantly we see that the number of years professionally coded actually has a more positive impact on compensation, whereas work experience has a negative effect. Why might this be the case?
 
 ```{r}
 
@@ -186,7 +181,7 @@ bind_rows(
   filter(!str_detect(term, "Remote")) %>%
   ggplot(aes(.estimate, term, color = Remote)) +
   geom_vline(xintercept = 0, size = 1.5, lty = 2, color = "gray50") +
-  geom_errorbar(size = 1.4, alpha = 0.7,
+  geom_errorbar(linewidth = 1.4, alpha = 0.7,
                 aes(xmin = .lower, xmax = .upper)) +
   geom_point(size = 3) +
   scale_x_continuous(labels = scales::dollar) +
@@ -200,13 +195,9 @@ bind_rows(
 
 ## Predictive Analytics
 
-Now that we have a better understanding of the data, let's proceed to 
-build some predictive models that will aid us in predicting whether
-a developer will opt for being fully remote or hybrid. 
+Now that we have a better understanding of the data, let's proceed to build some predictive models that will aid us in predicting whether a developer will opt for being fully remote or hybrid.
 
-We begin by creating our training and testing splits, using stratified
-re-sampling on the outcome variable:
-
+We begin by creating our training and testing splits, using stratified re-sampling on the outcome variable:
 
 ```{r}
 set.seed(1234)
@@ -215,8 +206,7 @@ Stack_train <- training(Stack_split)
 Stack_test <- testing(Stack_split)
 ```
 
-Next we want to specify our pre-processing recipe or our feature 
-engineering steps:
+Next we want to specify our pre-processing recipe or our feature engineering steps:
 
 ```{r}
 Stack_recipe <- recipe(RemoteWork ~ ., data = survey) %>% 
@@ -224,20 +214,14 @@ Stack_recipe <- recipe(RemoteWork ~ ., data = survey) %>%
   step_normalize(all_numeric_predictors())
 ```
 
-We applied two preprocessing steps, the first applies the Yeo-Johnson
-transformation to the data and the second normalises the data. One 
-could argue that only one is needed, however given the anomalies in
-the data, it would be safe to include both. We can also consider this
-when selecting the best model as a method for boosting performance.
+We applied two preprocessing steps, the first applies the Yeo-Johnson transformation to the data and the second normalises the data. One could argue that only one is needed, however given the anomalies in the data, it would be safe to include both. We can also consider this when selecting the best model as a method for boosting performance.
 
-Let's begin by specifying three models, all of which we will tune to 
-get good candidates for the final models. The specs for the models are
-outlined below:
+Let's begin by specifying three models, all of which we will tune to get good candidates for the final models. The specs for the models are outlined below:
 
 ```{r}
 
 glm_spec <-
-    logistic_reg(penalty = tune(),mixture = 1) |>
+    logistic_reg(mixture = 1) |>
     set_engine("glm")
 
 cart_spec <- 
@@ -251,22 +235,20 @@ tree_spec <-
   set_mode("classification")
 ```
 
-In addition, we will also implement 5-fold cross-validation, to make the model
-selection more robust. This is defined below:
+In addition, we will also implement 5-fold cross-validation, to make the model selection more robust. This is defined below:
 
 ```{r}
 set.seed(1234)
 Stack_folds <- vfold_cv(Stack_train,strata = RemoteWork,v = 5)
 ```
 
-Next, we specify a workflow set, which includes all of the models that we 
-specified. This will apply the recipe across the models.
+Next, we specify a workflow set, which includes all of the models that we specified. This will apply the recipe across the models.
 
 ```{r}
 doParallel::registerDoParallel()
 workflow_set <-
   workflow_set(
-    preproc = list(Stack_recipe),
+    preproc = list(Stack_recipe), # I'm gonna try to put another recipe here, with downsapling 
     models = list(
       glm = glm_spec,
       cart = cart_spec ,
@@ -274,9 +256,7 @@ workflow_set <-
   ) 
 ```
 
-Finally we need to set up a tuning grid such that different values for the 
-different parameters can be passed to the relevant models. We set this grid up 
-below, assigning the results to `grid_results`. 
+Finally we need to set up a tuning grid such that different values for the different parameters can be passed to the relevant models. We set this grid up below, assigning the results to `grid_results`.
 
 ```{r}
 
@@ -294,14 +274,13 @@ grid_results <-
     seed = 1503,
     resamples = Stack_folds,
     grid = 25,
-    control = grid_ctrl
+    control = grid_ctrl,
+  metrics = metric_set(roc_auc,accuracy, mn_log_loss, sensitivity, specificity)
   )
 
 ```
 
-We now have a set of candidates for our different types of 
-models. Let's get a quick summary of the best candidates 
-considering the `roc_auc` metric:
+We now have a set of candidates for our different types of models. Let's get a quick summary of the best candidates considering the `roc_auc` metric:
 
 ```{r}
 rank_results(grid_results,
@@ -311,12 +290,27 @@ rank_results(grid_results,
   gt()
 ```
 
-Performance isn't great, our accuracy and area under the curve remain 
-between 63% and 68%. It seems a simple logistic regression model will 
-do the job, eliminating the need for additional computation that is
-required for the other models. By employing a simpler model we will
-also be saving costs. Let's extract this model and perform one last
-train and test on the data:
+Performance isn't great, our accuracy and area under the curve remain between 63% and 68%. It seems a simple logistic regression model will do the job, eliminating the need for additional computation that is required for the other models. 
+
+```{r}
+grid_results %>% 
+  autoplot()+
+  theme_minimal()
+```
+
+Another plot, fluctuations of metrics according to tuned parameter
+```{r}
+downsample_rs <-
+    grid_results %>%
+    extract_workflow_set_result("recipe_tree")
+
+autoplot(downsample_rs)+
+  theme_light()+
+  labs(title = "Minimal Node Size Parameters effect on Metrics")
+```
+
+
+By employing a simpler model we will also be saving costs. Let's extract this model and perform one last train and test on the data:
 
 ```{r}
 best_model_id <- "recipe_glm"
@@ -345,8 +339,7 @@ final_fit |>
   gt()
 ```
 
-Our accuracy and area under the curve remain at around the same level. Let's
-visualise the curve:
+Our accuracy and area under the curve remain at around the same level. Let's visualise the curve:
 
 ```{r}
 final_fit %>% 
@@ -366,96 +359,46 @@ final_fit %>%
   theme_bw()
 ```
 
-The plot above demonstrates the variable importance in for the prediction.
-It seems that The country is the most important variable, being almost 30%
-more important than the other variables. Compensation in USD and the 
-organisation being 2 to 9 employees large also play a significant role in 
-predicting whether developers would be fully remote. 
+The plot above demonstrates the variable importance in for the prediction. It seems that The country is the most important variable, being almost 30% more important than the other variables. Compensation in USD and the organisation being 2 to 9 employees large also play a significant role in predicting whether developers would be fully remote.
 
-# Towards a Leaner Approach
 
-There are some structural issues with the data, one that particularly
-comes to mind is the class imbalance of the outcome variable. Let's
-also try to implement a few other tweaks to the workflow to generate better
-performance focusing on the logistic regression model. 
-
-First, let's create a workflowset but in this case we will pass two
-separate feature engineering recipes to the model, the first will
-be the same as the previous one  and the second will also include down 
-sampling of the outcome variable.
+Another Viz:
 
 ```{r}
-# Redefine splits:
-set.seed(1234)
-Stack_folds <- vfold_cv(Stack_train,strata = RemoteWork)
+extract_fit_engine(final_fit) %>% vi() -> stack_vip
+
+stack_vip %>%
+    group_by(Sign) %>%
+    slice_max(Importance, n = 15) %>%
+    ungroup() %>%
+    ggplot(aes(Importance, fct_reorder(Variable, Importance), fill = Sign)) + 
+    geom_col() +
+    facet_wrap(vars(Sign), scales = "free_y") +
+  scale_fill_manual(values =values)+
+    labs(y = NULL) +theme_minimal()+
+    theme(legend.position = "none")
 ```
 
-
-```{r}
-Stack_recipe <- recipe(RemoteWork ~ ., data = survey) %>% 
-  step_YeoJohnson(all_numeric_predictors()) %>% 
-  step_normalize(all_numeric_predictors())
-```
-
-The spec will remain the same, however we will specify 
-a narrower tuning grid, ranging from -3 to 0. First,lets
-set up our spec, then the workflow with 2 separate recipes:
-
-```{r}
-glmnet_spec <- logistic_reg(penalty = tune(), mixture = 1) %>% set_engine("glmnet")
-```
+# Conclusion, Reccomendations and Future Research Directions
 
 
 
-```{r}
 
-wf_set <-
-  workflow_set(
-    preproc= list(basic = Stack_recipe,
-         downsampling = down_sample_spec),
-    list(glmnet = glm_spec)
-  )
 
-wf_set
-```
 
-Let's specify our penalty grid, we make it narrower than the default
-which is -10 to 0, instead let's make it -3 to 0. In order to get
-a better understanding of the model we will extract a range of 
-metrics; accuracy, mn_log_loss, sensitivity, and specificity:
 
-```{r}
-narrower_penalty <- penalty(range = c(-3, 0))
 
-doParallel::registerDoParallel()
-set.seed(345)
-tune_rs <- 
-  workflow_map(
-    wf_set,
-    "tune_grid",
-    resamples = Stack_folds,
-    grid = 15,
-    metrics = metric_set(accuracy, mn_log_loss, sensitivity, specificity),
-    param_info = parameters(narrower_penalty)
-  )
 
-tune_rs
-```
 
-```{r}
-autoplot(tune_rs) + 
-  theme_light()+
-  theme(legend.position = "none")
 
-```
 
-Its not right, let's specify the model again:
 
-```{r}
-glmnet_spec <- 
-  logistic_reg(penalty = tune(), mixture = tune()) %>%
-  set_engine("glmnet")
-```
+
+
+
+
+
+
 
 
 
