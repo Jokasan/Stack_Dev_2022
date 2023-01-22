@@ -385,6 +385,13 @@ be the same as the previous one  and the second will also include down
 sampling of the outcome variable.
 
 ```{r}
+# Redefine splits:
+set.seed(1234)
+Stack_folds <- vfold_cv(Stack_train,strata = RemoteWork)
+```
+
+
+```{r}
 Stack_recipe <- recipe(RemoteWork ~ ., data = survey) %>% 
   step_YeoJohnson(all_numeric_predictors()) %>% 
   step_normalize(all_numeric_predictors())
@@ -392,24 +399,63 @@ Stack_recipe <- recipe(RemoteWork ~ ., data = survey) %>%
 
 The spec will remain the same, however we will specify 
 a narrower tuning grid, ranging from -3 to 0. First,lets
-set up our workflow with 2 separate recipes:
+set up our spec, then the workflow with 2 separate recipes:
+
+```{r}
+glmnet_spec <- logistic_reg(penalty = tune(), mixture = 1) %>% set_engine("glmnet")
+```
+
 
 
 ```{r}
 
 wf_set <-
   workflow_set(
-    list(basic = Stack_recipe,
-         downsampling = Stack_recipe %>% step_downsample(ratio = RemoteWork)),
+    preproc= list(basic = Stack_recipe,
+         downsampling = down_sample_spec),
     list(glmnet = glm_spec)
   )
 
 wf_set
 ```
 
+Let's specify our penalty grid, we make it narrower than the default
+which is -10 to 0, instead let's make it -3 to 0. In order to get
+a better understanding of the model we will extract a range of 
+metrics; accuracy, mn_log_loss, sensitivity, and specificity:
 
+```{r}
+narrower_penalty <- penalty(range = c(-3, 0))
 
+doParallel::registerDoParallel()
+set.seed(345)
+tune_rs <- 
+  workflow_map(
+    wf_set,
+    "tune_grid",
+    resamples = Stack_folds,
+    grid = 15,
+    metrics = metric_set(accuracy, mn_log_loss, sensitivity, specificity),
+    param_info = parameters(narrower_penalty)
+  )
 
+tune_rs
+```
+
+```{r}
+autoplot(tune_rs) + 
+  theme_light()+
+  theme(legend.position = "none")
+
+```
+
+Its not right, let's specify the model again:
+
+```{r}
+glmnet_spec <- 
+  logistic_reg(penalty = tune(), mixture = tune()) %>%
+  set_engine("glmnet")
+```
 
 
 
