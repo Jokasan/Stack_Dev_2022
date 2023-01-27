@@ -192,7 +192,7 @@ bind_rows(
   scale_color_manual(values = values) +
   theme(legend.position="bottom") +
   labs(x = "Change in compensation (USD $)", y = NULL, color = "Include working status in model?",
-       subtitle = "There is no difference in the effect of coding and work experience that developers have\naccording to whether they are remote developers or not")+
+       subtitle = "There is no difference in the effect of coding and work experience on compensation that developers get\naccording to whether they are remote or hybrid")+
   tidyquant::theme_tq()
 ```
 
@@ -302,8 +302,7 @@ grid_results %>%
 
 Let's consider, the decision tree that is rankled 25th. In terms of sensitivity the 25th ranked model, which is a decision tree. We can see that is achieves an accuracy score of around 6.40, whilst in terms of sensitivity it achieves around 0.77, however this comes at the expense of specificity which is just below 0.45. Finally, the area under the curve for this model is 0.65. We can see how these metrics fluctuate for the different model candidates, according to their rank.
 
-In addition to looking at how the metrics fluctuate at the overall level, we can also see how the tuned hyper-parameters affect the metrics. Let's consider the tuned parameter of the decision tree,
-minimal node size:
+In addition to looking at how the metrics fluctuate at the overall level, we can also see how the tuned hyper-parameters affect the metrics. Let's consider the tuned parameter of the decision tree, minimal node size:
 
 ```{r}
 #| fig-cap: Figure 5. Fluctuation in metrics according to min. node size
@@ -315,8 +314,7 @@ autoplot()+
   labs(title = "Minimal Node Size Effect on Metrics")
 ```
 
-For instance if we consider the area under the curve metric at around node size 38, we can see that it comes with
-a dip in specificity. The trade-off in metrics should be considered when focusing on a specific metric.
+For instance if we consider the area under the curve metric at around node size 38, we can see that it comes with a dip in specificity. The trade-off in metrics should be considered when focusing on a specific metric.
 
 By employing a simpler model we will also be saving costs. Let's extract this model and perform one last train and test on the data:
 
@@ -359,14 +357,14 @@ final_fit %>%
 
 ```
 
-Performance is still not very good but, given everything we have discussed so far it will do. Let's break down the model
-performance for each of the classes with a confusion matrix:
+Performance is still not very good but, given everything we have discussed so far it will do. Let's break down the model performance for each of the classes with a confusion matrix:
 
 ```{r}
 
 collect_predictions(final_fit) %>%
   conf_mat(RemoteWork, .pred_class)
 ```
+
 Let's get the variable importance at the overall level:
 
 ```{r}
@@ -380,8 +378,7 @@ final_fit %>%
 
 ```
 
-The plot above demonstrates the variable importance in for the prediction. It seems that The country is the most important variable, being almost 30% more important than the 
-other variables. Compensation in USD and the organisation being 2 to 9 employees large also play a significant role in predicting whether developers would be fully remote.
+The plot above demonstrates the variable importance in for the prediction. It seems that The country is the most important variable, being almost 30% more important than the other variables. Compensation in USD and the organisation being 2 to 9 employees large also play a significant role in predicting whether developers would be fully remote.
 
 It would be interesting to see to what extent the predictors are influencing the model, this is shown in the figure below:
 
@@ -403,48 +400,18 @@ extract_fit_engine(final_fit) %>%
     theme(legend.position = "none")
 ```
 
-It seems that whether the developer is located in the USA,the type of the contract 
-the developer has, and the organisation being 2-9 employees negatively influence
-the prediction of the outcome variable. In contrast,the educational level of the developer, the organisation
-being 10,000 employee or more and being located in Germany positively influence
-the outcome variable. In other words, the first three variables are drivers of 
-developers adopting a hybrid working arrangement, whilst the other three for developers
-adopting a fully remote working arrangement. 
+It seems that whether the developer is located in the USA,the type of the contract the developer has, and the organisation being 2-9 employees negatively influence the prediction of the outcome variable. In contrast,the educational level of the developer, the organisation being 10,000 employee or more and being located in Germany positively influence the outcome variable. In other words, the first three variables are drivers of developers adopting a hybrid working arrangement, whilst the other three for developers adopting a fully remote working arrangement.
 
 # Conclusion, Recommendations and Future Research Directions
 
-This project explores the Stack Over Flow developer survey for 2022. The 
-changes in the developer landscape, such as the fact that hybrid working
-arrangements are now included in the survey. Although the survey data contains 
-a lot of country, it was decided that the project would only focus on USA,
-Germany and the UK. After a brief exploration of the data, the effect 
-of including working arrangement on compensation was tested, yielding no
-statistically significant difference. Finally, predictive analytics was
-employed, using a `workflowset` to screen many models at once, ultimately 
-selecting the best model. To wrap up the project the variable importance
-was considered as well as the direction of the influence on the prediction.
+This project explores the Stack Over Flow developer survey for 2022. The changes in the developer landscape, such as the fact that hybrid working arrangements are now included in the survey. Although the survey data contains a lot of country, it was decided that the project would only focus on USA, Germany and the UK. After a brief exploration of the data, the effect of including working arrangement on compensation was tested, yielding no statistically significant difference. Finally, predictive analytics was employed, using a `workflowset` to screen many models at once, ultimately selecting the best model. To wrap up the project the variable importance was considered as well as the direction of the influence on the prediction.
 
-It could be argued that selecting the best random forest model would have 
-yielded better performance, since the logistic regression model simply
-used re-sampling with no hyperparameter tuning. This is something that can 
-be explored in future iterations of the project. 
+It could be argued that selecting the best random forest model would have yielded better performance, since the logistic regression model simply used re-sampling with no hyperparameter tuning. This is something that can be explored in future iterations of the project.
 
-Furthermore, the data contains some structural issues, such as the compensation
-being 0 or absurdly high 1 million+. Whilst this may be possible, it is anticipated
-that this is due to nature of the data collection, although care was taken
-to clean up the data, it may be useful to further explore how much this may
-be an issue. Finally it would also be worth exploring other models, such 
-as an `XG Boost` model or playing around with the pre-processing recipe. 
+Furthermore, the data contains some structural issues, such as the compensation being 0 or absurdly high 1 million+. Whilst this may be possible, it is anticipated that this is due to nature of the data collection, although care was taken to clean up the data, it may be useful to further explore how much this may be an issue. Finally it would also be worth exploring other models, such as an `XG Boost` model or playing around with the pre-processing recipe.
 
 # Session Info
 
 ```{r}
 sessionInfo() 
 ```
-
-
-
-
-
-
-
